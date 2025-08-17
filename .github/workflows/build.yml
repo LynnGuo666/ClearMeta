@@ -99,7 +99,7 @@ jobs:
         tar -czf ClearMeta-Linux.tar.gz -C release .
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact-name }}
         path: |

@@ -10,7 +10,15 @@
 - 进度条与实时日志
 - 基于 PyQt5 的现代化界面
 
-## 运行
+## 快速开始
+
+### 下载预编译版本
+访问 [Releases](../../releases) 页面下载对应平台的预编译版本：
+- **Windows**: `ClearMeta-Windows.tar.gz` 
+- **macOS**: `ClearMeta-macOS.tar.gz`
+- **Linux**: `ClearMeta-Linux.tar.gz`
+
+### 从源码运行
 确保已安装依赖：
 
 ```bash
@@ -38,6 +46,25 @@ python main.py
 4. 点击"开始清理"进行批量处理
 
 ## 打包为可执行文件
+
+### GitHub Actions 自动构建（推荐）
+
+本项目配置了 GitHub Actions 自动构建多平台版本：
+
+**发布版本**:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+自动构建并创建 Release，包含 Windows、macOS、Linux 三个平台的可执行文件。
+
+**手动构建测试**:
+1. 进入 GitHub 仓库的 Actions 页面
+2. 选择 "Manual Build" 工作流
+3. 点击 "Run workflow" 并选择平台
+4. 下载构建产物
+
+### 本地构建
 
 ### 自动化构建（推荐）
 
