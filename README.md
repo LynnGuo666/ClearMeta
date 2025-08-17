@@ -38,29 +38,83 @@ python main.py
 4. 点击"开始清理"进行批量处理
 
 ## 打包为可执行文件
-建议使用 PyInstaller：
 
+### 自动化构建（推荐）
+
+**macOS/Linux:**
 ```bash
-pip install pyinstaller
-pyinstaller --noconfirm \
+./build.sh
+```
+
+**Windows:**
+```cmd
+build.bat
+```
+
+### 手动构建
+
+#### macOS (.app 应用包)
+```bash
+# 使用规格文件（推荐）
+pyinstaller ClearMeta.spec
+
+# 或快速构建
+pyinstaller --noconfirm --windowed --name ClearMeta main.py
+```
+
+#### Windows (.exe 可执行文件)
+```bash
+# 单文件版本
+pyinstaller --noconfirm --windowed --onefile \
   --name ClearMeta \
-  --windowed \
+  --add-data "sponsor_qr.png;." \
+  --add-data "README.md;." \
+  main.py
+
+# 目录版本（启动更快）
+pyinstaller --noconfirm --windowed \
+  --name ClearMeta \
+  --add-data "sponsor_qr.png;." \
+  --add-data "README.md;." \
+  main.py
+```
+
+#### Linux (可执行文件)
+```bash
+pyinstaller --noconfirm --windowed \
+  --name ClearMeta \
+  --add-data "sponsor_qr.png:." \
   --add-data "README.md:." \
   main.py
 ```
 
-说明：
-- macOS 会生成 `dist/ClearMeta.app`
-- Windows 会得到 `dist/ClearMeta.exe`
-- 如果你想减小体积，可添加 `--onefile`（首启会更慢）
+### 构建输出
 
-示例（Windows onefile）：
+- **macOS**: `dist/ClearMeta.app` (可拖拽到 Applications 文件夹)
+- **Windows**: `dist/ClearMeta.exe` (双击运行)
+- **Linux**: `dist/ClearMeta/ClearMeta` (命令行运行)
 
-```bash
-pyinstaller --noconfirm --onefile --windowed --name ClearMeta main.py
-```
+### 打包注意事项
 
-如果需要把 `exiftool` 一并打包到目录，建议使用非 `--onefile` 模式并把 exiftool 可执行文件放入 `dist/ClearMeta/` 目录，程序会通过 `PATH` 自动发现。
+1. **依赖包含**: 自动包含 PyQt5、Pillow、piexif 等依赖
+2. **资源文件**: 包含赞助二维码和说明文档
+3. **图标**: 可在 `.spec` 文件中添加自定义图标
+4. **文件大小**: 大约 50-100MB（包含 Python 运行时）
+5. **exiftool**: 如需包含，请使用目录版本并放入相应可执行文件
+
+### 分发准备
+
+**macOS**:
+- 可选择安装 `create-dmg` 创建安装包: `brew install create-dmg`
+- 注意代码签名要求（发布到 App Store 需要）
+
+**Windows**:
+- 建议使用杀毒软件白名单避免误报
+- 可使用代码签名证书提升信任度
+
+**Linux**:
+- 可创建 `.deb` 或 `.rpm` 包
+- 或制作 AppImage 便携版本
 
 ## 系统要求
 - Python 3.7+

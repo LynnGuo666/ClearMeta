@@ -28,6 +28,8 @@ import piexif
 
 
 APP_NAME = "ClearMeta"
+APP_VERSION = "Beta 1.0.0"
+APP_AUTHOR = "Lynn"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
 
 
@@ -248,7 +250,7 @@ if QT_AVAILABLE:
     class ClearMetaApp(QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle(APP_NAME)
+            self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
             self.setGeometry(100, 100, 1200, 800)  # Larger window for EXIF viewer
             
             self.selected_files: List[Path] = []
@@ -390,7 +392,7 @@ if QT_AVAILABLE:
             self.log_text = QTextEdit()
             self.log_text.setMaximumHeight(120)
             log_layout.addWidget(self.log_text)
-            bottom_tabs.addTab(log_widget, "📝 日志")
+            bottom_tabs.addTab(log_widget, "日志")
             
             # Sponsor tab
             sponsor_widget = QWidget()
@@ -415,9 +417,15 @@ if QT_AVAILABLE:
             sponsor_text = QLabel("如果这个工具对您有帮助，\n欢迎扫码赞助支持开发！")
             sponsor_text.setAlignment(Qt.AlignCenter)
             
+            # About info
+            about_text = QLabel(f"关于\n\n作者: {APP_AUTHOR}\n版本: {APP_VERSION}\n\n一个简单易用的\n图片元数据清理工具")
+            about_text.setAlignment(Qt.AlignCenter)
+            about_text.setStyleSheet("color: #666; font-size: 11px; padding: 10px;")
+            
             sponsor_layout.addStretch()
             sponsor_layout.addWidget(self.qr_label)
             sponsor_layout.addWidget(sponsor_text)
+            sponsor_layout.addWidget(about_text)
             sponsor_layout.addStretch()
             
             bottom_tabs.addTab(sponsor_widget, "赞助支持")
