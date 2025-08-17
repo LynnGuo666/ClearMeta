@@ -13,7 +13,8 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
         QPushButton, QListWidget, QProgressBar, QLabel, QCheckBox,
-        QLineEdit, QTextEdit, QFileDialog, QMessageBox, QGroupBox
+        QLineEdit, QTextEdit, QFileDialog, QMessageBox, QGroupBox,
+        QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem
     )
     from PyQt5.QtCore import QThread, pyqtSignal, Qt, QUrl
     from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent, QPixmap
@@ -28,6 +29,52 @@ import piexif
 
 APP_NAME = "ClearMeta"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
+
+
+def extract_exif_info(file_path: Path) -> dict:
+    """Extract EXIF information from image file."""
+    info = {}
+    try:
+        with Image.open(str(file_path)) as img:
+            # Basic image info
+            info['文件大小'] = f"{file_path.stat().st_size / 1024:.1f} KB"
+            info['图片尺寸'] = f"{img.width} x {img.height}"
+            info['颜色模式'] = img.mode
+            info['格式'] = img.format or "Unknown"
+            
+            # EXIF data
+            if hasattr(img, '_getexif') and img._getexif():
+                exif_dict = img._getexif()
+                for tag_id, value in exif_dict.items():
+                    tag = piexif.TAGS.get(tag_id, tag_id)
+                    if isinstance(value, bytes):
+                        try:
+                            value = value.decode('utf-8', errors='ignore')
+                        except:
+                            value = str(value)
+                    info[f"EXIF_{tag}"] = str(value)
+            
+            # Try piexif for more detailed EXIF
+            try:
+                exif_dict = piexif.load(str(file_path))
+                for ifd_name, ifd in exif_dict.items():
+                    if ifd_name == "thumbnail" or not ifd:
+                        continue
+                    for tag_id, value in ifd.items():
+                        tag_name = piexif.TAGS.get(ifd_name, {}).get(tag_id, f"Tag_{tag_id}")
+                        if isinstance(value, bytes):
+                            try:
+                                value = value.decode('utf-8', errors='ignore')
+                            except:
+                                value = f"<{len(value)} bytes>"
+                        info[f"{ifd_name}_{tag_name}"] = str(value)
+            except:
+                pass
+                
+    except Exception as e:
+        info['错误'] = str(e)
+    
+    return info
 
 
 def _has_exiftool() -> Optional[str]:
@@ -202,7 +249,7 @@ if QT_AVAILABLE:
         def __init__(self):
             super().__init__()
             self.setWindowTitle(APP_NAME)
-            self.setGeometry(100, 100, 800, 600)
+            self.setGeometry(100, 100, 1200, 800)  # Larger window for EXIF viewer
             
             self.selected_files: List[Path] = []
             self.worker_thread = None
@@ -283,7 +330,13 @@ if QT_AVAILABLE:
             controls_layout.addLayout(options_layout)
             controls_layout.addLayout(output_layout)
             
-            # File list
+            # File list with EXIF viewer
+            main_splitter = QSplitter(Qt.Horizontal)
+            
+            # Left side: File list
+            left_widget = QWidget()
+            left_layout = QVBoxLayout(left_widget)
+            
             list_group = QGroupBox("图片列表（支持拖拽文件或文件夹到此处）")
             list_layout = QVBoxLayout(list_group)
             self.file_list = QListWidget()
@@ -291,7 +344,27 @@ if QT_AVAILABLE:
             self.file_list.setAcceptDrops(True)
             self.file_list.dragEnterEvent = self.dragEnterEvent
             self.file_list.dropEvent = self.dropEvent
+            self.file_list.currentItemChanged.connect(self.on_file_selected)
             list_layout.addWidget(self.file_list)
+            left_layout.addWidget(list_group)
+            
+            # Right side: EXIF info
+            right_widget = QWidget()
+            right_layout = QVBoxLayout(right_widget)
+            
+            exif_group = QGroupBox("EXIF 信息")
+            exif_layout = QVBoxLayout(exif_group)
+            self.exif_tree = QTreeWidget()
+            self.exif_tree.setHeaderLabels(["属性", "值"])
+            self.exif_tree.setAlternatingRowColors(True)
+            self.exif_tree.setRootIsDecorated(False)
+            exif_layout.addWidget(self.exif_tree)
+            right_layout.addWidget(exif_group)
+            
+            main_splitter.addWidget(left_widget)
+            main_splitter.addWidget(right_widget)
+            main_splitter.setStretchFactor(0, 2)  # File list takes 2/3
+            main_splitter.setStretchFactor(1, 1)  # EXIF info takes 1/3
             
             # Progress and action buttons
             action_layout = QHBoxLayout()
@@ -308,16 +381,20 @@ if QT_AVAILABLE:
             action_layout.addWidget(self.start_btn)
             action_layout.addWidget(self.open_output_btn)
             
-            # Log
-            log_group = QGroupBox("日志")
-            log_layout = QVBoxLayout(log_group)
-            self.log_text = QTextEdit()
-            self.log_text.setMaximumHeight(150)
-            log_layout.addWidget(self.log_text)
+            # Bottom tabs for log and sponsor
+            bottom_tabs = QTabWidget()
             
-            # Sponsor section
-            sponsor_group = QGroupBox("赞助支持")
-            sponsor_layout = QHBoxLayout(sponsor_group)
+            # Log tab
+            log_widget = QWidget()
+            log_layout = QVBoxLayout(log_widget)
+            self.log_text = QTextEdit()
+            self.log_text.setMaximumHeight(120)
+            log_layout.addWidget(self.log_text)
+            bottom_tabs.addTab(log_widget, "📝 日志")
+            
+            # Sponsor tab
+            sponsor_widget = QWidget()
+            sponsor_layout = QHBoxLayout(sponsor_widget)
             
             # QR code image
             self.qr_label = QLabel()
@@ -343,12 +420,13 @@ if QT_AVAILABLE:
             sponsor_layout.addWidget(sponsor_text)
             sponsor_layout.addStretch()
             
+            bottom_tabs.addTab(sponsor_widget, "赞助支持")
+            
             # Add all to main layout
             layout.addWidget(controls_group)
-            layout.addWidget(list_group, 1)  # stretch factor 1
+            layout.addWidget(main_splitter, 1)  # Main content takes most space
             layout.addLayout(action_layout)
-            layout.addWidget(log_group)
-            layout.addWidget(sponsor_group)
+            layout.addWidget(bottom_tabs)
             
             self.toggle_output_dir()
 
@@ -388,6 +466,29 @@ if QT_AVAILABLE:
         def clear_list(self):
             self.selected_files.clear()
             self.file_list.clear()
+            self.exif_tree.clear()
+
+        def on_file_selected(self, current, previous):
+            """Handle file selection and show EXIF info."""
+            self.exif_tree.clear()
+            
+            if current is None:
+                return
+                
+            current_row = self.file_list.row(current)
+            if 0 <= current_row < len(self.selected_files):
+                file_path = self.selected_files[current_row]
+                
+                # Extract and display EXIF info
+                exif_info = extract_exif_info(file_path)
+                
+                for key, value in exif_info.items():
+                    item = QTreeWidgetItem([key, str(value)])
+                    self.exif_tree.addTopLevelItem(item)
+                
+                # Auto-resize columns
+                self.exif_tree.resizeColumnToContents(0)
+                self.exif_tree.resizeColumnToContents(1)
 
         def start_clean(self):
             if not self.selected_files:
