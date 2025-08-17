@@ -14,7 +14,7 @@ try:
         QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
         QPushButton, QListWidget, QProgressBar, QLabel, QCheckBox,
         QLineEdit, QTextEdit, QFileDialog, QMessageBox, QGroupBox,
-        QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem
+        QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem, QComboBox
     )
     from PyQt5.QtCore import QThread, pyqtSignal, Qt, QUrl
     from PyQt5.QtGui import QFont, QDragEnterEvent, QDropEvent, QPixmap
@@ -203,8 +203,8 @@ def _ensure_parent_dir(path: Path) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, str]:
-	"""Use FFmpeg to clean metadata from image files."""
+def _ffmpeg_clean_metadata(input_path: Path, output_path: Path, output_format: str = "原格式") -> Tuple[bool, str]:
+	"""Use FFmpeg to clean metadata from image files with optional format conversion."""
 	ffmpeg = _has_ffmpeg()
 	if not ffmpeg:
 		return False, "FFmpeg not found"
@@ -213,72 +213,37 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, s
 		import subprocess
 		_ensure_parent_dir(output_path)
 		
-		# 根据文件格式选择最佳的 FFmpeg 参数
-		ext = input_path.suffix.lower()
+		# 根据输出格式调整输出路径和编码参数
+		if output_format == "JPG":
+			output_path = output_path.with_suffix('.jpg')
+			codec_params = ["-c:v", "mjpeg", "-q:v", "2"]  # 高质量JPEG
+		elif output_format == "PNG":
+			output_path = output_path.with_suffix('.png')
+			codec_params = ["-c:v", "png", "-compression_level", "6"]
+		else:  # 原格式
+			ext = input_path.suffix.lower()
+			if ext in ['.jpg', '.jpeg']:
+				codec_params = ["-c:v", "copy"]  # 保持原始质量
+			elif ext == '.png':
+				codec_params = ["-c:v", "png", "-compression_level", "6"]
+			elif ext == '.webp':
+				codec_params = ["-c:v", "libwebp", "-quality", "95"]
+			elif ext in ['.tif', '.tiff']:
+				codec_params = ["-c:v", "tiff", "-compression_algo", "lzw"]
+			elif ext == '.bmp':
+				codec_params = ["-c:v", "bmp"]
+			else:
+				codec_params = ["-c:v", "copy"]
 		
-		if ext in ['.jpg', '.jpeg']:
-			# JPEG: 使用 copy 保持原始质量，同时清除元数据
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",  # 移除所有元数据
-				"-c:v", "copy",  # 复制视频流，保持原始质量
-				"-y",  # 覆盖输出文件
-				str(output_path)
-			]
-		elif ext == '.png':
-			# PNG: 重新编码以确保元数据完全清除
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",  # 移除所有元数据
-				"-c:v", "png",  # PNG 编码器
-				"-compression_level", "6",  # 压缩级别
-				"-y",  # 覆盖输出文件
-				str(output_path)
-			]
-		elif ext == '.webp':
-			# WebP: 使用 libwebp 编码器
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",
-				"-c:v", "libwebp",
-				"-quality", "95",
-				"-y",
-				str(output_path)
-			]
-		elif ext in ['.tif', '.tiff']:
-			# TIFF: 保持无损压缩
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",
-				"-c:v", "tiff",
-				"-compression_algo", "lzw",
-				"-y",
-				str(output_path)
-			]
-		elif ext == '.bmp':
-			# BMP: 直接复制
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",
-				"-c:v", "bmp",
-				"-y",
-				str(output_path)
-			]
-		else:
-			# 其他格式使用通用方法
-			cmd = [
-				ffmpeg,
-				"-i", str(input_path),
-				"-map_metadata", "-1",
-				"-c:v", "copy",
-				"-y",
-				str(output_path)
-			]
+		# 构建 FFmpeg 命令
+		cmd = [
+			ffmpeg,
+			"-i", str(input_path),
+			"-map_metadata", "-1",  # 移除所有元数据
+		] + codec_params + [
+			"-y",  # 覆盖输出文件
+			str(output_path)
+		]
 		
 		result = subprocess.run(
 			cmd, 
@@ -289,7 +254,8 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, s
 		)
 		
 		if result.returncode == 0:
-			return True, "FFmpeg清理成功"
+			format_info = f" -> {output_format}" if output_format != "原格式" else ""
+			return True, f"FFmpeg清理成功{format_info}"
 		else:
 			return False, f"FFmpeg错误: {result.stderr}"
 			
@@ -299,6 +265,52 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, s
 		return False, f"FFmpeg异常: {str(e)}"
 
 
+def _pil_resave_strip_metadata_with_format(inp: Path, outp: Path, output_format: str = "原格式") -> None:
+	"""Fallback: re-save via Pillow to drop metadata with optional format conversion."""
+	with Image.open(str(inp)) as im:
+		im = ImageOps.exif_transpose(im)
+		
+		# 根据输出格式设置参数
+		if output_format == "JPG":
+			# 转换为 RGB 模式以支持 JPEG
+			if im.mode in ("RGBA", "LA", "P"):
+				rgb_img = Image.new("RGB", im.size, (255, 255, 255))
+				if im.mode == "P":
+					im = im.convert("RGBA")
+				if im.mode in ("RGBA", "LA"):
+					rgb_img.paste(im, mask=im.split()[-1])
+				im = rgb_img
+			elif im.mode not in ("RGB", "L"):
+				im = im.convert("RGB")
+			fmt = "JPEG"
+			params = {"quality": 95, "optimize": True}
+		elif output_format == "PNG":
+			fmt = "PNG"
+			pnginfo = PngImagePlugin.PngInfo()
+			params = {"pnginfo": pnginfo, "optimize": True}
+		else:  # 原格式
+			fmt = (im.format or inp.suffix.replace('.', '').upper())
+			fmt = (fmt or "").upper()
+			if fmt == "JPG":
+				fmt = "JPEG"
+			if fmt == "TIF":
+				fmt = "TIFF"
+			params = {}
+
+			if fmt.upper() in {"JPEG", "JPG"}:
+				params.update({"quality": 95, "optimize": True})
+			elif fmt.upper() == "PNG":
+				pnginfo = PngImagePlugin.PngInfo()
+				params.update({"pnginfo": pnginfo, "optimize": True})
+			elif fmt.upper() == "WEBP":
+				params.update({"quality": 95, "method": 6})
+			elif fmt.upper() in {"TIFF", "TIF"}:
+				params.update({"compression": "tiff_deflate"})
+
+		_ensure_parent_dir(outp)
+		im.save(str(outp), fmt, **params)
+
+
 def _pil_resave_strip_metadata(inp: Path, outp: Path) -> None:
 	"""Fallback: re-save via Pillow to drop metadata across common formats.
 
@@ -306,30 +318,7 @@ def _pil_resave_strip_metadata(inp: Path, outp: Path) -> None:
 	- Remove EXIF, XMP, IPTC by not passing them through
 	- PNG: remove text chunks; JPEG/TIFF: avoid embedding exif
 	"""
-	with Image.open(str(inp)) as im:
-		im = ImageOps.exif_transpose(im)
-		fmt = (im.format or inp.suffix.replace('.', '').upper())
-		fmt = (fmt or "").upper()
-		if fmt == "JPG":
-			fmt = "JPEG"
-		if fmt == "TIF":
-			fmt = "TIFF"
-		params = {}
-
-		if fmt.upper() in {"JPEG", "JPG"}:
-			# Explicitly drop EXIF by not passing exif bytes
-			params.update({"quality": 95, "optimize": True})
-		elif fmt.upper() == "PNG":
-			# Empty PNGInfo to avoid original text chunks
-			pnginfo = PngImagePlugin.PngInfo()
-			params.update({"pnginfo": pnginfo, "optimize": True})
-		elif fmt.upper() == "WEBP":
-			params.update({"quality": 95, "method": 6})
-		elif fmt.upper() in {"TIFF", "TIF"}:
-			params.update({"compression": "tiff_deflate"})
-
-		_ensure_parent_dir(outp)
-		im.save(str(outp), fmt, **params)
+	_pil_resave_strip_metadata_with_format(inp, outp, "原格式")
 
 
 def _piexif_strip_if_needed(outp: Path) -> None:
@@ -347,6 +336,7 @@ def clean_one_image(
 	input_path: Path,
 	output_path: Path,
 	prefer_ffmpeg: bool = True,
+	output_format: str = "原格式",
 ) -> Tuple[bool, str]:
 	"""Clean metadata from a single image file with enhanced AI metadata removal using FFmpeg.
 
@@ -357,30 +347,34 @@ def clean_one_image(
 		is_ai, ai_markers = detect_ai_generated_metadata(input_path)
 		ai_info = f" (检测到AI生成: {len(ai_markers)}个标识)" if is_ai else ""
 		
-		# 方法1: 优先使用 FFmpeg (最强大的元数据清理，支持JPG/PNG等格式)
+		# 根据输出格式调整输出路径
+		if output_format == "JPG":
+			output_path = output_path.with_suffix('.jpg')
+		elif output_format == "PNG":
+			output_path = output_path.with_suffix('.png')
+		
+		# 方法1: 优先使用 FFmpeg (最强大的元数据清理，支持格式转换)
 		if prefer_ffmpeg and _has_ffmpeg():
-			success, msg = _ffmpeg_clean_metadata(input_path, output_path)
+			success, msg = _ffmpeg_clean_metadata(input_path, output_path, output_format)
 			if success:
 				return True, f"FFmpeg清理: {input_path.name}{ai_info}"
 			# FFmpeg 失败则继续尝试其他方法
 		
-		# 方法2: 使用 exiftool 作为备选
-		if _has_exiftool():
+		# 方法2: 使用 exiftool 作为备选 (不支持格式转换)
+		if _has_exiftool() and output_format == "原格式":
 			_ensure_parent_dir(output_path)
-			# Use exiftool to remove everything (-all=) and write to output (-o)
-			# This avoids creating backups and handles XMP/IPTC comprehensively.
 			import subprocess
 
 			cmd = [_has_exiftool(), "-all=", "-o", str(output_path), str(input_path)]
 			res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			if res.returncode == 0:
 				return True, f"exiftool清理: {input_path.name}{ai_info}"
-			# exiftool 失败则使用 Python 方法
 		
-		# 方法3: 使用 Python/Pillow 作为最后的备选
-		_pil_resave_strip_metadata(input_path, output_path)
+		# 方法3: 使用 Python/Pillow (支持格式转换)
+		_pil_resave_strip_metadata_with_format(input_path, output_path, output_format)
 		_piexif_strip_if_needed(output_path)
-		return True, f"Python清理: {input_path.name}{ai_info}"
+		format_info = f" -> {output_format}" if output_format != "原格式" else ""
+		return True, f"Python清理: {input_path.name}{ai_info}{format_info}"
 
 	except Exception as e:
 		return False, f"清理失败: {input_path.name} -> {e}"
@@ -434,7 +428,7 @@ class WorkerThread(QThread):
                     else:
                         out_base = self.config.output_dir or f.parent
                         out = out_base / f.name
-                    fut = ex.submit(clean_one_image, f, out, self.config.use_ffmpeg)
+                    fut = ex.submit(clean_one_image, f, out, self.config.use_ffmpeg, self.config.output_format)
                     fut_to_file[fut] = (f, i)
 
                 for fut in as_completed(fut_to_file):
@@ -457,6 +451,7 @@ class JobConfig:
     overwrite: bool
     output_dir: Optional[Path]
     use_ffmpeg: bool
+    output_format: str = "原格式"  # "原格式", "JPG", "PNG"
     workers: int = 4
 
 
@@ -527,10 +522,17 @@ if QT_AVAILABLE:
             # 默认启用 FFmpeg，如果可用的话
             self.use_ffmpeg_cb.setChecked(True)
             
+            # 输出格式选择
+            self.format_combo = QComboBox()
+            self.format_combo.addItems(["原格式", "JPG", "PNG"])
+            self.format_combo.setCurrentText("原格式")
+            
             self.overwrite_cb.toggled.connect(self.toggle_output_dir)
             
             options_layout.addWidget(self.overwrite_cb)
             options_layout.addWidget(self.use_ffmpeg_cb)
+            options_layout.addWidget(QLabel("输出格式:"))
+            options_layout.addWidget(self.format_combo)
             options_layout.addStretch()
             
             # Output directory row
@@ -737,6 +739,7 @@ if QT_AVAILABLE:
                 overwrite=overwrite,
                 output_dir=out_dir,
                 use_ffmpeg=self.use_ffmpeg_cb.isChecked(),
+                output_format=self.format_combo.currentText(),
             )
 
             self.progress_bar.setMaximum(len(self.selected_files))

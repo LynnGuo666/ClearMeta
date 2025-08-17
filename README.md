@@ -1,14 +1,18 @@
 # ClearMeta
 
-一个简单的 GUI 工具，用于批量去除图片的 EXIF/XMP/IPTC 等元数据，保护隐私。默认优先调用 exiftool（若存在），否则使用 Pillow + piexif 进行安全重存。
+一个专业的AI图片元数据清理器，支持批量去除图片的 EXIF/XMP/IPTC 等元数据，保护隐私。使用 FFmpeg 作为主要清理引擎，支持 AI 生成图片检测与专属清理。
 
-## 功能
-- **拖拽支持**：直接拖拽图片文件或文件夹到窗口中
-- 手动选择图片或整个文件夹，自动递归收集常见图片格式（jpg/jpeg/png/webp/tif/tiff/bmp）
-- 覆盖原文件或输出到指定目录
-- 可选优先使用 exiftool（更彻底，建议安装），无则自动回退
-- 进度条与实时日志
-- 基于 PyQt5 的现代化界面
+## 功能特色
+- **🤖 AI 检测**：自动识别 AI 生成图片（Stable Diffusion、DALL·E、Midjourney 等）
+- **🚀 FFmpeg 引擎**：优先使用 FFmpeg 进行最强大的元数据清理
+- **📁 拖拽支持**：直接拖拽图片文件或文件夹到窗口中
+- **📊 EXIF 查看**：实时显示选中图片的详细元数据信息
+- **💰 赞助支持**：内置赞助二维码，支持开发者
+- **⚡ 多线程处理**：快速批量处理大量图片
+- **🔄 多重备选**：FFmpeg → exiftool → Python/Pillow 三重保障
+
+## 支持格式
+JPG/JPEG、PNG、WebP、TIFF、BMP
 
 ## 快速开始
 
@@ -30,7 +34,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
-可选安装 exiftool 提升清理彻底度：
+推荐安装 FFmpeg 获得最佳清理效果：
+
+- macOS（Homebrew）：`brew install ffmpeg`
+- Windows（choco）：`choco install ffmpeg`
+- Linux（apt）：`sudo apt-get install ffmpeg`
+
+可选安装 exiftool 作为备选：
 
 - macOS（Homebrew）：`brew install exiftool`
 - Windows（choco）：`choco install exiftool`
