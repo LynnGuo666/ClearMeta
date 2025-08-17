@@ -119,7 +119,19 @@ jobs:
     - name: Download all artifacts
       uses: actions/download-artifact@v3
     
+    - name: Prepare release files
+      run: |
+        mkdir -p release-files
+        # 移动所有构建文件到发布目录
+        find . -name "ClearMeta-*.tar.gz" -o -name "ClearMeta-*.zip" | while read file; do
+          if [ -f "$file" ]; then
+            cp "$file" release-files/
+          fi
+        done
+        ls -la release-files/
+    
     - name: Create Release
+      id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,12 +166,38 @@ jobs:
         draft: false
         prerelease: false
     
-    - name: Upload Release Assets
-      run: |
-        # 上传所有构建的文件到发布页面
-        for file in ClearMeta-*/*.{tar.gz,zip}; do
-          if [ -f "$file" ]; then
-            echo "Uploading $file"
-            # 这里需要使用 GitHub CLI 或其他方式上传文件
-          fi
-        done
+    - name: Upload Linux Release Asset
+      if: always()
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./release-files/ClearMeta-Linux-x64.tar.gz
+        asset_name: ClearMeta-Linux-x64.tar.gz
+        asset_content_type: application/gzip
+      continue-on-error: true
+    
+    - name: Upload Windows Release Asset
+      if: always()
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./release-files/ClearMeta-Windows-x64.zip
+        asset_name: ClearMeta-Windows-x64.zip
+        asset_content_type: application/zip
+      continue-on-error: true
+    
+    - name: Upload macOS Release Asset
+      if: always()
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./release-files/ClearMeta-macOS-x64.tar.gz
+        asset_name: ClearMeta-macOS-x64.tar.gz
+        asset_content_type: application/gzip
+      continue-on-error: true
