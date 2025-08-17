@@ -1,0 +1,165 @@
+name: Auto Build and Release
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  # 当推送标签时也触发构建
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg exiftool
+
+    - name: Install system dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install ffmpeg exiftool
+
+    - name: Install system dependencies (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        # 在 Windows 上安装 FFmpeg 和 exiftool
+        choco install ffmpeg exiftool -y
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Test application
+      run: |
+        python -c "import main; print('Application imports successfully')"
+
+    - name: Build executable (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        pyinstaller --onefile \
+          --windowed \
+          --name "ClearMeta" \
+          --add-data "sponsor_qr.png:." \
+          --hidden-import "PyQt5.QtCore" \
+          --hidden-import "PyQt5.QtWidgets" \
+          --hidden-import "PyQt5.QtGui" \
+          --hidden-import "PIL" \
+          --hidden-import "piexif" \
+          main.py
+
+    - name: Build executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --onefile --windowed --name "ClearMeta" --add-data "sponsor_qr.png;." --hidden-import "PyQt5.QtCore" --hidden-import "PyQt5.QtWidgets" --hidden-import "PyQt5.QtGui" --hidden-import "PIL" --hidden-import "piexif" main.py
+
+    - name: Create portable package (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        mkdir -p release
+        cp dist/ClearMeta release/
+        cp README.md release/
+        cp PNG_INFO_清理说明.md release/
+        if [ -f sponsor_qr.png ]; then cp sponsor_qr.png release/; fi
+        cd release
+        if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          tar -czf ../ClearMeta-Linux-x64.tar.gz *
+        else
+          tar -czf ../ClearMeta-macOS-x64.tar.gz *
+        fi
+
+    - name: Create portable package (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir release
+        copy dist\ClearMeta.exe release\
+        copy README.md release\
+        copy PNG_INFO_清理说明.md release\
+        if exist sponsor_qr.png copy sponsor_qr.png release\
+        cd release
+        7z a ..\ClearMeta-Windows-x64.zip *
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ClearMeta-${{ matrix.os }}
+        path: |
+          ClearMeta-*.tar.gz
+          ClearMeta-*.zip
+        retention-days: 30
+
+  # 如果是标签推送，创建正式发布
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: ClearMeta ${{ github.ref }}
+        body: |
+          ## ClearMeta 自动构建版本
+          
+          ### 功能特点
+          - 🤖 AI 图片元数据检测与清理
+          - 📝 PNG Info 专门显示与清理
+          - 🔧 三层清理机制（FFmpeg、exiftool、Python）
+          - 🎨 支持格式转换（JPG/PNG）
+          - 📋 拖拽添加文件/文件夹
+          
+          ### 系统要求
+          - **Linux**: 建议安装 FFmpeg 和 exiftool 获得最佳效果
+          - **Windows**: 建议安装 FFmpeg 和 exiftool 获得最佳效果
+          - **macOS**: 建议安装 FFmpeg 和 exiftool 获得最佳效果
+          
+          ### 下载说明
+          - `ClearMeta-Linux-x64.tar.gz`: Linux 版本
+          - `ClearMeta-Windows-x64.zip`: Windows 版本
+          - `ClearMeta-macOS-x64.tar.gz`: macOS 版本
+          
+          ### 使用说明
+          1. 下载对应系统的压缩包
+          2. 解压后运行 ClearMeta 可执行文件
+          3. 拖拽图片或选择文件夹开始清理
+          
+        draft: false
+        prerelease: false
+    
+    - name: Upload Release Assets
+      run: |
+        # 上传所有构建的文件到发布页面
+        for file in ClearMeta-*/*.{tar.gz,zip}; do
+          if [ -f "$file" ]; then
+            echo "Uploading $file"
+            # 这里需要使用 GitHub CLI 或其他方式上传文件
+          fi
+        done
