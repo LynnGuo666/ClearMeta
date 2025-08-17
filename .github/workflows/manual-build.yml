@@ -29,19 +29,19 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             artifact-name: ClearMeta-Linux
-        exclude:
-          - os: ${{ github.event.inputs.build_platform == 'windows' && 'macos-latest' || 'skip' }}
-          - os: ${{ github.event.inputs.build_platform == 'windows' && 'ubuntu-latest' || 'skip' }}
-          - os: ${{ github.event.inputs.build_platform == 'macos' && 'windows-latest' || 'skip' }}
-          - os: ${{ github.event.inputs.build_platform == 'macos' && 'ubuntu-latest' || 'skip' }}
-          - os: ${{ github.event.inputs.build_platform == 'linux' && 'windows-latest' || 'skip' }}
-          - os: ${{ github.event.inputs.build_platform == 'linux' && 'macos-latest' || 'skip' }}
+    
+    # 根据输入参数跳过不需要的平台
+    if: |
+      github.event.inputs.build_platform == 'all' ||
+      (github.event.inputs.build_platform == 'windows' && matrix.platform == 'windows') ||
+      (github.event.inputs.build_platform == 'macos' && matrix.platform == 'macos') ||
+      (github.event.inputs.build_platform == 'linux' && matrix.platform == 'linux')
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
@@ -83,7 +83,7 @@ jobs:
       shell: bash
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact-name }}
         path: |

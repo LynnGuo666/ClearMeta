@@ -1,8 +1,66 @@
-*.png
-*.jpg
-*.jpeg
-*.webp
-*.tif
-*.tiff
-*.bmp
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test images
+test_*.jpg
+test_*.png
+test_*.jpeg
+test_*.webp
+test_*.tif
+test_*.tiff
+test_*.bmp
+
+# Logs
+*.log
+
+# Keep sponsor QR code and sample images
+!sponsor_qr.png
+!sample_*.jpg
+!sample_*.png
