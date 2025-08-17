@@ -194,8 +194,62 @@ def _has_exiftool() -> Optional[str]:
 	return shutil.which("exiftool")
 
 
+def _has_ffmpeg() -> Optional[str]:
+	"""Return ffmpeg path if available, else None."""
+	return shutil.which("ffmpeg")
+
+
 def _ensure_parent_dir(path: Path) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, str]:
+	"""Use FFmpeg to clean metadata from image files."""
+	ffmpeg = _has_ffmpeg()
+	if not ffmpeg:
+		return False, "FFmpeg not found"
+	
+	try:
+		import subprocess
+		_ensure_parent_dir(output_path)
+		
+		# FFmpeg command to remove all metadata
+		# -map_metadata -1 removes all metadata streams
+		# -c copy uses stream copy for faster processing when possible
+		cmd = [
+			ffmpeg,
+			"-i", str(input_path),
+			"-map_metadata", "-1",  # Remove all metadata
+			"-c:v", "copy" if input_path.suffix.lower() in ['.jpg', '.jpeg'] else "libx264",
+			"-y",  # Overwrite output file
+			str(output_path)
+		]
+		
+		# For PNG files, use PNG codec to maintain quality
+		if input_path.suffix.lower() == '.png':
+			cmd[-3] = "png"
+		elif input_path.suffix.lower() == '.webp':
+			cmd[-3] = "libwebp"
+		elif input_path.suffix.lower() in ['.tif', '.tiff']:
+			cmd[-3] = "tiff"
+		
+		result = subprocess.run(
+			cmd, 
+			stdout=subprocess.PIPE, 
+			stderr=subprocess.PIPE, 
+			text=True,
+			timeout=60
+		)
+		
+		if result.returncode == 0:
+			return True, "FFmpeg清理成功"
+		else:
+			return False, f"FFmpeg错误: {result.stderr}"
+			
+	except subprocess.TimeoutExpired:
+		return False, "FFmpeg处理超时"
+	except Exception as e:
+		return False, f"FFmpeg异常: {str(e)}"
 
 
 def _pil_resave_strip_metadata(inp: Path, outp: Path) -> None:
@@ -245,18 +299,28 @@ def _piexif_strip_if_needed(outp: Path) -> None:
 def clean_one_image(
 	input_path: Path,
 	output_path: Path,
-	prefer_exiftool: bool = True,
+	prefer_ffmpeg: bool = True,
 ) -> Tuple[bool, str]:
-	"""Clean metadata from a single image file.
+	"""Clean metadata from a single image file with enhanced AI metadata removal using FFmpeg.
 
 	Returns (ok, message).
 	"""
 	try:
-		if prefer_exiftool:
-			exiftool = _has_exiftool()
-		else:
-			exiftool = None
-
+		# 先检测是否为AI生成图片
+		is_ai, ai_markers = detect_ai_generated_metadata(input_path)
+		ai_info = f" (检测到AI生成: {len(ai_markers)}个标识)" if is_ai else ""
+		
+		# 方法1: 优先使用 FFmpeg (最强大的元数据清理)
+		if prefer_ffmpeg:
+			success, msg = _ffmpeg_clean_metadata(input_path, output_path)
+			if success:
+				return True, f"FFmpeg清理: {input_path.name}{ai_info}"
+			else:
+				# FFmpeg 失败，尝试其他方法
+				pass
+		
+		# 方法2: 使用 exiftool 作为备选
+		exiftool = _has_exiftool()
 		if exiftool:
 			_ensure_parent_dir(output_path)
 			# Use exiftool to remove everything (-all=) and write to output (-o)
@@ -265,21 +329,19 @@ def clean_one_image(
 
 			cmd = [exiftool, "-all=", "-o", str(output_path), str(input_path)]
 			res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-			if res.returncode != 0:
-				# Fallback to Pillow path
-				_pil_resave_strip_metadata(input_path, output_path)
-				_piexif_strip_if_needed(output_path)
+			if res.returncode == 0:
+				return True, f"exiftool清理: {input_path.name}{ai_info}"
 			else:
-				# exiftool tends to add a trailing copy suffix if -o points to a directory.
-				# We passed a file path, so we should be fine; still, normalize if a secondary file got created.
+				# exiftool 失败，使用 Python 方法
 				pass
-		else:
-			_pil_resave_strip_metadata(input_path, output_path)
-			_piexif_strip_if_needed(output_path)
+		
+		# 方法3: 使用 Python/Pillow 作为最后的备选
+		_pil_resave_strip_metadata(input_path, output_path)
+		_piexif_strip_if_needed(output_path)
+		return True, f"Python清理: {input_path.name}{ai_info}"
 
-		return True, f"Cleaned: {input_path.name}"
 	except Exception as e:
-		return False, f"Failed: {input_path.name} -> {e}"
+		return False, f"清理失败: {input_path.name} -> {e}"
 
 
 def gather_images(paths: List[Path]) -> List[Path]:
@@ -330,7 +392,7 @@ class WorkerThread(QThread):
                     else:
                         out_base = self.config.output_dir or f.parent
                         out = out_base / f.name
-                    fut = ex.submit(clean_one_image, f, out, self.config.use_exiftool)
+                    fut = ex.submit(clean_one_image, f, out, self.config.use_ffmpeg)
                     fut_to_file[fut] = (f, i)
 
                 for fut in as_completed(fut_to_file):
@@ -352,7 +414,7 @@ class WorkerThread(QThread):
 class JobConfig:
     overwrite: bool
     output_dir: Optional[Path]
-    use_exiftool: bool
+    use_ffmpeg: bool
     workers: int = 4
 
 
@@ -576,10 +638,19 @@ if QT_AVAILABLE:
             for p in imgs:
                 if p not in self.selected_files:
                     self.selected_files.append(p)
-                    self.file_list.addItem(str(p))
+                    # 检测AI生成标识
+                    is_ai, ai_markers = detect_ai_generated_metadata(p)
+                    display_name = str(p)
+                    if is_ai:
+                        display_name = f"🤖 {display_name}"
+                    self.file_list.addItem(display_name)
                     added += 1
             if added:
                 self.log(f"添加 {added} 个文件")
+                # 如果有AI生成图片，添加提示
+                ai_count = sum(1 for p in self.selected_files if detect_ai_generated_metadata(p)[0])
+                if ai_count > 0:
+                    self.log(f"检测到 {ai_count} 个AI生成图片 🤖")
 
         def clear_list(self):
             self.selected_files.clear()
