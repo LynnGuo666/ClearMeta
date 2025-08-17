@@ -60,9 +60,9 @@ git push origin v1.0.0
 
 **手动构建测试**:
 1. 进入 GitHub 仓库的 Actions 页面
-2. 选择 "Manual Build" 工作流
-3. 点击 "Run workflow" 并选择平台
-4. 下载构建产物
+2. 选择 "Build and Release" 工作流
+3. 点击 "Run workflow"
+4. 等待完成后下载构建产物
 
 ### 本地构建
 
