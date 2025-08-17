@@ -28,7 +28,7 @@ import piexif
 
 
 APP_NAME = "ClearMeta - AI图片元数据清理器"
-APP_VERSION = "Beta 1.1.0"
+APP_VERSION = "Beta 1.2.0"
 APP_AUTHOR = "Lynn"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
 
@@ -213,25 +213,72 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path) -> Tuple[bool, s
 		import subprocess
 		_ensure_parent_dir(output_path)
 		
-		# FFmpeg command to remove all metadata
-		# -map_metadata -1 removes all metadata streams
-		# -c copy uses stream copy for faster processing when possible
-		cmd = [
-			ffmpeg,
-			"-i", str(input_path),
-			"-map_metadata", "-1",  # Remove all metadata
-			"-c:v", "copy" if input_path.suffix.lower() in ['.jpg', '.jpeg'] else "libx264",
-			"-y",  # Overwrite output file
-			str(output_path)
-		]
+		# 根据文件格式选择最佳的 FFmpeg 参数
+		ext = input_path.suffix.lower()
 		
-		# For PNG files, use PNG codec to maintain quality
-		if input_path.suffix.lower() == '.png':
-			cmd[-3] = "png"
-		elif input_path.suffix.lower() == '.webp':
-			cmd[-3] = "libwebp"
-		elif input_path.suffix.lower() in ['.tif', '.tiff']:
-			cmd[-3] = "tiff"
+		if ext in ['.jpg', '.jpeg']:
+			# JPEG: 使用 copy 保持原始质量，同时清除元数据
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",  # 移除所有元数据
+				"-c:v", "copy",  # 复制视频流，保持原始质量
+				"-y",  # 覆盖输出文件
+				str(output_path)
+			]
+		elif ext == '.png':
+			# PNG: 重新编码以确保元数据完全清除
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",  # 移除所有元数据
+				"-c:v", "png",  # PNG 编码器
+				"-compression_level", "6",  # 压缩级别
+				"-y",  # 覆盖输出文件
+				str(output_path)
+			]
+		elif ext == '.webp':
+			# WebP: 使用 libwebp 编码器
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",
+				"-c:v", "libwebp",
+				"-quality", "95",
+				"-y",
+				str(output_path)
+			]
+		elif ext in ['.tif', '.tiff']:
+			# TIFF: 保持无损压缩
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",
+				"-c:v", "tiff",
+				"-compression_algo", "lzw",
+				"-y",
+				str(output_path)
+			]
+		elif ext == '.bmp':
+			# BMP: 直接复制
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",
+				"-c:v", "bmp",
+				"-y",
+				str(output_path)
+			]
+		else:
+			# 其他格式使用通用方法
+			cmd = [
+				ffmpeg,
+				"-i", str(input_path),
+				"-map_metadata", "-1",
+				"-c:v", "copy",
+				"-y",
+				str(output_path)
+			]
 		
 		result = subprocess.run(
 			cmd, 
@@ -310,30 +357,25 @@ def clean_one_image(
 		is_ai, ai_markers = detect_ai_generated_metadata(input_path)
 		ai_info = f" (检测到AI生成: {len(ai_markers)}个标识)" if is_ai else ""
 		
-		# 方法1: 优先使用 FFmpeg (最强大的元数据清理)
-		if prefer_ffmpeg:
+		# 方法1: 优先使用 FFmpeg (最强大的元数据清理，支持JPG/PNG等格式)
+		if prefer_ffmpeg and _has_ffmpeg():
 			success, msg = _ffmpeg_clean_metadata(input_path, output_path)
 			if success:
 				return True, f"FFmpeg清理: {input_path.name}{ai_info}"
-			else:
-				# FFmpeg 失败，尝试其他方法
-				pass
+			# FFmpeg 失败则继续尝试其他方法
 		
 		# 方法2: 使用 exiftool 作为备选
-		exiftool = _has_exiftool()
-		if exiftool:
+		if _has_exiftool():
 			_ensure_parent_dir(output_path)
 			# Use exiftool to remove everything (-all=) and write to output (-o)
 			# This avoids creating backups and handles XMP/IPTC comprehensively.
 			import subprocess
 
-			cmd = [exiftool, "-all=", "-o", str(output_path), str(input_path)]
+			cmd = [_has_exiftool(), "-all=", "-o", str(output_path), str(input_path)]
 			res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			if res.returncode == 0:
 				return True, f"exiftool清理: {input_path.name}{ai_info}"
-			else:
-				# exiftool 失败，使用 Python 方法
-				pass
+			# exiftool 失败则使用 Python 方法
 		
 		# 方法3: 使用 Python/Pillow 作为最后的备选
 		_pil_resave_strip_metadata(input_path, output_path)
@@ -481,13 +523,14 @@ if QT_AVAILABLE:
             # Options row
             options_layout = QHBoxLayout()
             self.overwrite_cb = QCheckBox("覆盖原文件")
-            self.use_exiftool_cb = QCheckBox("优先使用 exiftool（更彻底）")
-            self.use_exiftool_cb.setChecked(bool(_has_exiftool()))
+            self.use_ffmpeg_cb = QCheckBox("优先使用 FFmpeg（最强大的元数据清理）")
+            # 默认启用 FFmpeg，如果可用的话
+            self.use_ffmpeg_cb.setChecked(True)
             
             self.overwrite_cb.toggled.connect(self.toggle_output_dir)
             
             options_layout.addWidget(self.overwrite_cb)
-            options_layout.addWidget(self.use_exiftool_cb)
+            options_layout.addWidget(self.use_ffmpeg_cb)
             options_layout.addStretch()
             
             # Output directory row
@@ -693,7 +736,7 @@ if QT_AVAILABLE:
             config = JobConfig(
                 overwrite=overwrite,
                 output_dir=out_dir,
-                use_exiftool=self.use_exiftool_cb.isChecked(),
+                use_ffmpeg=self.use_ffmpeg_cb.isChecked(),
             )
 
             self.progress_bar.setMaximum(len(self.selected_files))
