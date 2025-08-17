@@ -143,8 +143,9 @@ def extract_exif_info(file_path: Path) -> dict:
             else:
                 info['🤖 AI生成检测'] = "否"
             
-            # PNG info (常包含AI生成信息)
+            # PNG info (常包含AI生成信息和其他元数据)
             if hasattr(img, 'info') and img.info:
+                info['📋 PNG Info 总数'] = f"{len(img.info)} 个文本块"
                 for key, value in img.info.items():
                     key_str = str(key)
                     if isinstance(value, bytes):
@@ -152,7 +153,13 @@ def extract_exif_info(file_path: Path) -> dict:
                             value = value.decode('utf-8', errors='ignore')
                         except:
                             value = f"<{len(value)} bytes>"
-                    info[f"PNG_{key_str}"] = str(value)[:200] + ("..." if len(str(value)) > 200 else "")
+                    # 高亮显示重要的 PNG 信息
+                    display_key = f"📝 PNGINFO_{key_str}"
+                    if key_str.lower() in ['parameters', 'prompt', 'negative prompt', 'seed', 'model']:
+                        display_key = f"🎨 AI_{key_str}"
+                    info[display_key] = str(value)[:500] + ("..." if len(str(value)) > 500 else "")
+            elif file_path.suffix.lower() == '.png':
+                info['📋 PNG Info'] = "无文本块"
             
             # EXIF data
             if hasattr(img, '_getexif') and img._getexif():
@@ -203,6 +210,29 @@ def _ensure_parent_dir(path: Path) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _clean_png_info_thoroughly(file_path: Path) -> None:
+	"""专门用于彻底清理 PNG 文件的 pnginfo 和文本块"""
+	try:
+		# 使用 PIL 重新保存 PNG，确保清除所有文本块
+		with Image.open(str(file_path)) as img:
+			# 清除所有 info 数据
+			if hasattr(img, 'info'):
+				img.info.clear()
+			
+			# 创建新的空 PngInfo 对象
+			pnginfo = PngImagePlugin.PngInfo()
+			
+			# 保存时不包含任何文本块
+			temp_path = file_path.with_suffix('.tmp.png')
+			img.save(str(temp_path), "PNG", pnginfo=pnginfo, optimize=True)
+			
+			# 替换原文件
+			temp_path.replace(file_path)
+	except Exception:
+		# 如果清理失败，不影响主流程
+		pass
+
+
 def _ffmpeg_clean_metadata(input_path: Path, output_path: Path, output_format: str = "原格式") -> Tuple[bool, str]:
 	"""Use FFmpeg to clean metadata from image files with optional format conversion."""
 	ffmpeg = _has_ffmpeg()
@@ -219,12 +249,14 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path, output_format: s
 			codec_params = ["-c:v", "mjpeg", "-q:v", "2"]  # 高质量JPEG
 		elif output_format == "PNG":
 			output_path = output_path.with_suffix('.png')
+			# PNG 特殊处理：确保移除所有文本块和元数据
 			codec_params = ["-c:v", "png", "-compression_level", "6"]
 		else:  # 原格式
 			ext = input_path.suffix.lower()
 			if ext in ['.jpg', '.jpeg']:
 				codec_params = ["-c:v", "copy"]  # 保持原始质量
 			elif ext == '.png':
+				# PNG 原格式也要确保彻底清理元数据
 				codec_params = ["-c:v", "png", "-compression_level", "6"]
 			elif ext == '.webp':
 				codec_params = ["-c:v", "libwebp", "-quality", "95"]
@@ -235,15 +267,21 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path, output_format: s
 			else:
 				codec_params = ["-c:v", "copy"]
 		
-		# 构建 FFmpeg 命令
+		# 构建 FFmpeg 命令，特别针对 PNG 文件加强元数据清理
 		cmd = [
 			ffmpeg,
 			"-i", str(input_path),
 			"-map_metadata", "-1",  # 移除所有元数据
+			"-map", "0:v",  # 只保留视频流（图像数据）
 		] + codec_params + [
 			"-y",  # 覆盖输出文件
 			str(output_path)
 		]
+		
+		# 如果是 PNG 格式，添加额外的过滤器确保移除所有文本块
+		if output_format == "PNG" or input_path.suffix.lower() == '.png':
+			# 使用重新编码而不是复制，确保彻底清理
+			cmd[cmd.index("-c:v")+1] = "png"
 		
 		result = subprocess.run(
 			cmd, 
@@ -268,6 +306,10 @@ def _ffmpeg_clean_metadata(input_path: Path, output_path: Path, output_format: s
 def _pil_resave_strip_metadata_with_format(inp: Path, outp: Path, output_format: str = "原格式") -> None:
 	"""Fallback: re-save via Pillow to drop metadata with optional format conversion."""
 	with Image.open(str(inp)) as im:
+		# 彻底清除所有元数据，包括 PNG info
+		if hasattr(im, 'info'):
+			im.info.clear()
+		
 		im = ImageOps.exif_transpose(im)
 		
 		# 根据输出格式设置参数
@@ -283,9 +325,11 @@ def _pil_resave_strip_metadata_with_format(inp: Path, outp: Path, output_format:
 			elif im.mode not in ("RGB", "L"):
 				im = im.convert("RGB")
 			fmt = "JPEG"
-			params = {"quality": 95, "optimize": True}
+			# 确保不包含任何元数据
+			params = {"quality": 95, "optimize": True, "exif": b''}
 		elif output_format == "PNG":
 			fmt = "PNG"
+			# 创建空的 PngInfo 对象，确保不包含任何文本块
 			pnginfo = PngImagePlugin.PngInfo()
 			params = {"pnginfo": pnginfo, "optimize": True}
 		else:  # 原格式
@@ -298,12 +342,15 @@ def _pil_resave_strip_metadata_with_format(inp: Path, outp: Path, output_format:
 			params = {}
 
 			if fmt.upper() in {"JPEG", "JPG"}:
-				params.update({"quality": 95, "optimize": True})
+				# 确保 JPEG 不包含 EXIF 数据
+				params.update({"quality": 95, "optimize": True, "exif": b''})
 			elif fmt.upper() == "PNG":
+				# 创建空的 PngInfo，彻底清除所有 PNG 文本块
 				pnginfo = PngImagePlugin.PngInfo()
 				params.update({"pnginfo": pnginfo, "optimize": True})
 			elif fmt.upper() == "WEBP":
-				params.update({"quality": 95, "method": 6})
+				# WebP 格式也清除 EXIF
+				params.update({"quality": 95, "method": 6, "exif": b''})
 			elif fmt.upper() in {"TIFF", "TIF"}:
 				params.update({"compression": "tiff_deflate"})
 
@@ -357,6 +404,9 @@ def clean_one_image(
 		if prefer_ffmpeg and _has_ffmpeg():
 			success, msg = _ffmpeg_clean_metadata(input_path, output_path, output_format)
 			if success:
+				# 如果输出是 PNG 格式，进行额外的深度清理
+				if output_path.suffix.lower() == '.png':
+					_clean_png_info_thoroughly(output_path)
 				return True, f"FFmpeg清理: {input_path.name}{ai_info}"
 			# FFmpeg 失败则继续尝试其他方法
 		
@@ -368,11 +418,19 @@ def clean_one_image(
 			cmd = [_has_exiftool(), "-all=", "-o", str(output_path), str(input_path)]
 			res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			if res.returncode == 0:
+				# 如果是 PNG 文件，进行额外的深度清理
+				if output_path.suffix.lower() == '.png':
+					_clean_png_info_thoroughly(output_path)
 				return True, f"exiftool清理: {input_path.name}{ai_info}"
 		
 		# 方法3: 使用 Python/Pillow (支持格式转换)
 		_pil_resave_strip_metadata_with_format(input_path, output_path, output_format)
 		_piexif_strip_if_needed(output_path)
+		
+		# 如果输出是 PNG 格式，进行额外的深度清理
+		if output_path.suffix.lower() == '.png':
+			_clean_png_info_thoroughly(output_path)
+		
 		format_info = f" -> {output_format}" if output_format != "原格式" else ""
 		return True, f"Python清理: {input_path.name}{ai_info}{format_info}"
 
@@ -519,8 +577,8 @@ if QT_AVAILABLE:
             options_layout = QHBoxLayout()
             self.overwrite_cb = QCheckBox("覆盖原文件")
             self.use_ffmpeg_cb = QCheckBox("优先使用 FFmpeg（最强大的元数据清理）")
-            # 默认启用 FFmpeg，如果可用的话
-            self.use_ffmpeg_cb.setChecked(True)
+            # FFmpeg 默认不勾选，让用户根据需要手动选择
+            self.use_ffmpeg_cb.setChecked(False)
             
             # 输出格式选择
             self.format_combo = QComboBox()
@@ -718,6 +776,17 @@ if QT_AVAILABLE:
                 
                 for key, value in exif_info.items():
                     item = QTreeWidgetItem([key, str(value)])
+                    
+                    # 高亮显示重要的元数据信息
+                    if key.startswith('📝 PNGINFO') or key.startswith('🎨 AI_') or key.startswith('📋 PNG Info'):
+                        # PNG info 相关条目使用特殊颜色
+                        item.setBackground(0, Qt.lightGray)
+                        item.setBackground(1, Qt.lightGray)
+                    elif key.startswith('🤖') or key.startswith('🔍'):
+                        # AI 检测相关信息使用高亮色
+                        item.setBackground(0, Qt.yellow)
+                        item.setBackground(1, Qt.yellow)
+                    
                     self.exif_tree.addTopLevelItem(item)
                 
                 # Auto-resize columns
